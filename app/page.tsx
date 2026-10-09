@@ -32,7 +32,7 @@ export default function Home() {
   const architecture = config.architecture;
 
   const tick = (timeSec: number) => {
-    setClock((prev) => advanceClock(prev, 0.05 * speed) % Math.max(1, sim.inputIQ.length));
+    setClock((prev) => advanceClock(prev, 0.005 * speed) % Math.max(1, sim.inputIQ.length));
   };
   useAnimation(tick, running);
 

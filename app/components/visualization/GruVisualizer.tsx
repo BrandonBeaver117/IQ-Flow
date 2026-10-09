@@ -3,7 +3,7 @@
 import { useMemo } from 'react';
 import type { SimulationConfig } from '../../hooks/useSimulation';
 import { clamp01, pulse, ease, ampOf } from './primitives';
-import { Gate, Arrow, SignalNode } from './primitives';
+import { Arrow, SignalNode, Gate } from './primitives';
 
 export interface GruVisualizerProps {
   inputIQ: Array<[number, number]>;
@@ -12,12 +12,6 @@ export interface GruVisualizerProps {
   clock: number;
 }
 
-/**
- * GRU data-flow visualization: ONE recurrent cell, laid out LEFT to RIGHT.
- * x(t) and h(t-1) enter from the left -> gates + candidate inside the cell
- * -> h(t) leaves right -> Output -> PA. A short carry path under the cell
- * shows h(t) feeding the next step. No inference is performed.
- */
 const CY = 320;
 
 export function GruVisualizer({ inputIQ, paOutput, config, clock }: GruVisualizerProps) {
@@ -35,23 +29,20 @@ export function GruVisualizer({ inputIQ, paOutput, config, clock }: GruVisualize
   const hCur = hiddenAt(t);
 
   const amp = ampOf(cur);
-  const rBase = clamp01(0.35 + 0.5 * amp * (0.5 + 0.5 * Math.sin(t)));
-  const zBase = clamp01(0.3 + 0.5 * amp * (0.5 + 0.5 * Math.cos(t)));
-
   const xIn = pulse(phase, 0, 0.3);
+  const hOut = pulse(phase, 0.7, 1);
+
+  // Gate values: deterministic from the live IQ window (data flow only).
   const gatesPhase = clamp01((phase - 0.3) / 0.4);
   const gatesWave = ease(gatesPhase);
-  const hOut = pulse(phase, 0.7, 1);
   const gatesActive = phase >= 0.3 && phase <= 0.72;
-  const rVal = rBase * gatesWave;
-  const zVal = zBase * gatesWave;
+  const rVal = clamp01(0.35 + 0.5 * amp * (0.5 + 0.5 * Math.sin(t))) * gatesWave;
+  const zVal = clamp01(0.3 + 0.5 * amp * (0.5 + 0.5 * Math.cos(t))) * gatesWave;
 
-  // Horizontal geometry: x(t) + h(t-1) pills on the left, cell center,
-  // h(t) pill + output + PA marching right along CY.
-  const xNodeX = 90;
-  const hPrevX = 260;
-  const cellX = 380;
-  const cellW = 300;
+  // Horizontal geometry: cell centered, x(t) + h(t-1) on left,
+  // h(t) -> output -> PA marching right along CY.
+  const cellX = 320;
+  const cellW = 320;
   const cellH = 220;
   const cellY = CY - cellH / 2;
   const outX = cellX + cellW + 60;
@@ -59,77 +50,151 @@ export function GruVisualizer({ inputIQ, paOutput, config, clock }: GruVisualize
   const paX = outX + outW + 50;
   const paW = 140;
 
+  // Input node positions
+  const xNodeX = 80;
+  const hPrevX = 150;
+  const xNodeY = cellY + cellH - 30;
+  const hPrevY = cellY + 20;
+
+  // Port positions on cell left edge
+  const portR = 6;
+  const xPortX = cellX;
+  const xPortY = xNodeY;
+  const hPortX = cellX;
+  const hPortY = hPrevY;
+
+  // Interior layout: Reset + Update stacked left, Candidate right.
+  const boxW = 118;
+  const boxH = 68;
+  const resetX = cellX + 64;
+  const resetY = cellY + 42;
+  const updateX = cellX + 64;
+  const updateY = cellY + 118;
+  const resetMidY = resetY + boxH / 2;
+  const updateMidY = updateY + boxH / 2;
+  const candX = cellX + 198;
+  const candY = cellY + 42;
+  const candW = 104;
+  const candH = boxH * 2 + 8;
+  // Shared merge dot + trunk (H/V wiring only).
+  const mergeX = cellX + 30;
+  const mergeY = (resetMidY + updateMidY) / 2;
+  const trunkX = cellX + 48;
+
   return (
     <g>
       <text x={16} y={22} className='node-label' fill='#374151' fontSize={10}>
         {'one GRU cell - hidden state ' + hidden + ' - x(t) + h(t-1) flow right into the cell'}
       </text>
 
-      {/* x(t) enters from the left */}
-      <SignalNode x={xNodeX} y={CY - 40} label='x(t)' value={amp.toFixed(2)} active={xIn > 0.35} color='#3b82f6' w={110} />
-      <Arrow x1={xNodeX + 60} y1={CY - 40} x2={cellX - 8} y2={CY - 40} active={xIn > 0.35} label='input' />
+      {/* x(t) enters on the left near the bottom (blue) */}
+      <SignalNode x={xNodeX} y={xNodeY} label='x(t)' value={amp.toFixed(2)} active={xIn > 0.35} color='#3b82f6' w={120} />
+      <Arrow x1={xNodeX + 60} y1={xNodeY} x2={xPortX - portR - 4} y2={xNodeY} active={xIn > 0.35} color='#3b82f6' />
 
-      {/* h(t-1) enters below it */}
-      <SignalNode x={hPrevX} y={CY + 44} label='h(t-1)' value={hPrev.toFixed(2)} active={gatesActive} color='#7c3aed' w={110} />
-      <Arrow x1={hPrevX + 60} y1={CY + 44} x2={cellX - 8} y2={CY + 44} active={gatesActive} color='#7c3aed' label='state in' />
+      {/* h(t-1) enters on the left near the top (purple) */}
+      <SignalNode x={hPrevX} y={hPrevY} label='h(t-1)' value={hPrev.toFixed(2)} active={xIn > 0.35 || phase > 0.1} color='#7c3aed' w={120} />
+      <Arrow x1={hPrevX + 60} y1={hPrevY} x2={hPortX - portR - 4} y2={hPrevY} active={xIn > 0.35 || phase > 0.1} color='#7c3aed' />
 
-      {/* GRU cell */}
+      {/* GRU cell shell: one rounded rectangle with a faint background */}
       <g>
         <rect
           x={cellX}
           y={cellY}
           width={cellW}
           height={cellH}
-          rx={12}
-          fill={gatesActive ? '#fffbeb' : '#ffffff'}
-          stroke={gatesActive ? '#f59e0b' : '#7c3aed'}
-          strokeWidth={gatesActive ? 1.8 : 1.4}
+          rx={14}
+          fill='#faf8ff'
+          stroke='#7c3aed'
+          strokeWidth={1.6}
         />
-        <text x={cellX + cellW / 2} y={cellY + 20} textAnchor='middle' className='node-label' fill={gatesActive ? '#92400e' : '#111827'} fontSize={11}>
+        <text x={cellX + cellW / 2} y={cellY + 24} textAnchor='middle' className='node-label' fill='#5b21b6' fontSize={12}>
           GRU Cell
         </text>
-        <Gate x={cellX + 84} y={cellY + 34} w={130} label='Reset' value={rVal} />
-        <Gate x={cellX + 84} y={cellY + 62} w={130} label='Update' value={zVal} />
-        <rect
-          x={cellX + 84}
-          y={cellY + 96}
-          width={130}
-          height={52}
-          rx={8}
-          fill={gatesActive ? '#fef3c7' : '#f5f3ff'}
-          stroke={gatesActive ? '#f59e0b' : '#7c3aed'}
-          strokeWidth={gatesActive ? 1.4 : 1}
-        />
-        <text x={cellX + 149} y={cellY + 118} textAnchor='middle' className='node-label' fill={gatesActive ? '#92400e' : '#5b21b6'} fontSize={9}>
+        {/* Input ports on left edge: blue x(t) near bottom, purple h(t-1) near top */}
+        <circle cx={xPortX} cy={xPortY} r={portR} fill='#eff6ff' stroke='#3b82f6' strokeWidth={1.5} />
+        <circle cx={hPortX} cy={hPortY} r={portR} fill='#f5f3ff' stroke='#7c3aed' strokeWidth={1.5} />
+
+        {/* Shared merge point: one dot where x(t) and h(t-1) combine (H/V wires only) */}
+        <line x1={xPortX} y1={xPortY} x2={xPortX + 14} y2={xPortY} stroke='#3b82f6' strokeWidth={1.4} />
+        <line x1={xPortX + 14} y1={xPortY} x2={xPortX + 14} y2={mergeY} stroke='#3b82f6' strokeWidth={1.4} />
+        <line x1={hPortX} y1={hPortY} x2={hPortX + 14} y2={hPortY} stroke='#7c3aed' strokeWidth={1.4} />
+        <line x1={hPortX + 14} y1={hPortY} x2={hPortX + 14} y2={mergeY} stroke='#7c3aed' strokeWidth={1.4} />
+        <line x1={xPortX + 14} y1={mergeY} x2={mergeX} y2={mergeY} stroke='#6b7280' strokeWidth={1.4} />
+        <line x1={hPortX + 14} y1={mergeY} x2={mergeX} y2={mergeY} stroke='#6b7280' strokeWidth={1.4} />
+        <circle cx={mergeX} cy={mergeY} r={4} fill='#6b7280' />
+
+        {/* Trunk from merge dot right, splitting up/down into Reset and Update */}
+        <line x1={mergeX} y1={mergeY} x2={trunkX} y2={mergeY} stroke='#6b7280' strokeWidth={1.4} />
+        <line x1={trunkX} y1={resetMidY} x2={trunkX} y2={updateMidY} stroke='#6b7280' strokeWidth={1.4} />
+        <line x1={trunkX} y1={resetMidY} x2={resetX} y2={resetMidY} stroke='#6b7280' strokeWidth={1.4} />
+        <line x1={trunkX} y1={updateMidY} x2={updateX} y2={updateMidY} stroke='#6b7280' strokeWidth={1.4} />
+        {/* Candidate feed: straight horizontal wire from the trunk */}
+        <line x1={trunkX} y1={mergeY} x2={candX} y2={mergeY} stroke='#6b7280' strokeWidth={1.4} />
+
+        {/* Reset box (green) with value bar */}
+        <rect x={resetX} y={resetY} width={boxW} height={boxH} rx={8} fill='#f0fdf4' stroke='#16a34a' strokeWidth={1.4} />
+        <text x={resetX + boxW / 2} y={resetY + 16} textAnchor='middle' className='node-label' fill='#14532d' fontSize={11}>
+          Reset
+        </text>
+        <text x={resetX + boxW / 2} y={resetY + 28} textAnchor='middle' className='node-sublabel' fill='#4d7c0f' fontSize={8}>
+          what to ignore
+        </text>
+        <text x={resetX + boxW / 2} y={resetY + 38} textAnchor='middle' className='node-sublabel' fill='#4d7c0f' fontSize={8}>
+          from the past
+        </text>
+        <Gate x={resetX + 10} y={resetY + 44} w={boxW - 44} label='' value={rVal} />
+
+        {/* Update box (green) with value bar */}
+        <rect x={updateX} y={updateY} width={boxW} height={boxH} rx={8} fill='#f0fdf4' stroke='#16a34a' strokeWidth={1.4} />
+        <text x={updateX + boxW / 2} y={updateY + 16} textAnchor='middle' className='node-label' fill='#14532d' fontSize={11}>
+          Update
+        </text>
+        <text x={updateX + boxW / 2} y={updateY + 28} textAnchor='middle' className='node-sublabel' fill='#4d7c0f' fontSize={8}>
+          keep old
+        </text>
+        <text x={updateX + boxW / 2} y={updateY + 38} textAnchor='middle' className='node-sublabel' fill='#4d7c0f' fontSize={8}>
+          vs take new
+        </text>
+        <Gate x={updateX + 10} y={updateY + 44} w={boxW - 44} label='' value={zVal} />
+
+        {/* Candidate box (amber) */}
+        <rect x={candX} y={candY} width={candW} height={candH} rx={8} fill='#fffbeb' stroke='#f59e0b' strokeWidth={1.4} />
+        <text x={candX + candW / 2} y={candY + 22} textAnchor='middle' className='node-label' fill='#92400e' fontSize={11}>
           Candidate
         </text>
-        <text x={cellX + 149} y={cellY + 134} textAnchor='middle' className='node-sublabel' fill={gatesActive ? '#92400e' : '#6b7280'} fontSize={9}>
-          {'h~(t) ' + (0.5 + 0.3 * Math.sin(t)).toFixed(2)}
+        <text x={candX + candW / 2} y={candY + 38} textAnchor='middle' className='node-sublabel' fill='#b45309' fontSize={8}>
+          proposed
         </text>
-        <Arrow x1={cellX + 149} y1={cellY + 150} x2={cellX + 149} y2={cellY + cellH - 10} active={gatesActive} />
-        <text x={cellX + cellW / 2} y={cellY + cellH - 14} textAnchor='middle' className='node-sublabel' fill={gatesActive ? '#92400e' : '#6b7280'} fontSize={9}>
-          {'h(t) ' + hCur.toFixed(2)}
+        <text x={candX + candW / 2} y={candY + 50} textAnchor='middle' className='node-sublabel' fill='#b45309' fontSize={8}>
+          new memory
         </text>
       </g>
+
+      {/* h(t) leaves right */}
+      <Arrow x1={cellX + cellW + 6} y1={CY} x2={outX - 60} y2={CY} active={hOut > 0.3} color='#7c3aed' />
+
+      {/* Purple return line under the cell back to h(t-1) input (H/V only) */}
+      <g>
+        <line x1={cellX + cellW} y1={CY} x2={cellX + cellW + 30} y2={CY} stroke='#7c3aed' strokeWidth={3} opacity={0.8} />
+        <line x1={cellX + cellW + 30} y1={CY} x2={cellX + cellW + 30} y2={cellY + cellH + 40} stroke='#7c3aed' strokeWidth={3} opacity={0.8} />
+        <line x1={cellX + cellW + 30} y1={cellY + cellH + 40} x2={hPrevX + 55} y2={cellY + cellH + 40} stroke='#7c3aed' strokeWidth={3} opacity={0.8} />
+        <line x1={hPrevX + 55} y1={cellY + cellH + 40} x2={hPrevX + 55} y2={hPortY} stroke='#7c3aed' strokeWidth={3} opacity={0.8} />
+        <polygon
+          points={`${hPrevX + 55},${hPortY - 5} ${hPrevX + 42},${hPortY + 3} ${hPrevX + 55},${hPortY + 12}`}
+          fill='#7c3aed'
+          opacity={0.8}
+        />
+      </g>
+      <text x={(cellX + cellW + hPrevX) / 2} y={cellY + cellH + 34} textAnchor='middle' className='node-sublabel' fill='#7c3aed' fontSize={9}>
+        carry to next step
+      </text>
+
+      {/* Same weights note */}
       <text x={cellX + cellW / 2} y={cellY + cellH + 16} textAnchor='middle' className='node-sublabel' fill='#6b7280' fontSize={9}>
         same weights, same cell, every step
       </text>
 
-      {/* Short carry path under the cell: h(t) feeds next step */}
-      <path
-        d={'M ' + (cellX + 40) + ' ' + (cellY + cellH + 4) + ' L ' + hPrevX + ' ' + (CY + 66)}
-        fill='none'
-        stroke='#7c3aed'
-        strokeWidth={1.2}
-        strokeDasharray='4 3'
-        opacity={0.7}
-      />
-      <text x={(cellX + 40 + hPrevX) / 2} y={cellY + cellH + 34} textAnchor='middle' className='node-sublabel' fill='#7c3aed' fontSize={9}>
-        carry h(t) to next step
-      </text>
-
       {/* h(t) leaves right -> output -> PA */}
-      <Arrow x1={cellX + cellW + 6} y1={CY} x2={outX - 60} y2={CY} active={hOut > 0.3} color='#7c3aed' />
       <SignalNode x={outX - 4} y={CY} label='h(t)' value={hCur.toFixed(2)} active={hOut > 0.35} color='#7c3aed' w={104} />
       <Arrow x1={outX + 52} y1={CY} x2={outX + outW - 118} y2={CY} active={hOut > 0.4} label='output' />
       <g>

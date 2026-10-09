@@ -163,8 +163,8 @@ export function SimulationControls({
       <CompactSlider
         label='Speed'
         value={speedLocal}
-        min={0.1}
-        max={3}
+        min={0.5}
+        max={2}
         step={0.1}
         format={(v) => v.toFixed(1) + 'x'}
         onChange={handleSpeed}
@@ -219,16 +219,8 @@ export function SimulationControls({
             step={1}
             onChange={handleKernel}
           />
-          <CompactSlider
-            label='Dilation'
-            value={dilation}
-            min={1}
-            max={4}
-            step={1}
-            onChange={handleDilation}
-          />
           <Metric label='Channels' value='2 (I, Q)' />
-          <Metric label='Receptive field' value={1 + (kernelSize - 1) * dilation} />
+          <Metric label='Receptive field' value={kernelSize} />
           <Metric label='K-params' value={kernelSize * 2} />
         </>
       )}

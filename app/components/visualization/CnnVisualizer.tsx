@@ -20,7 +20,7 @@ export function CnnVisualizer({ inputIQ, paOutput, config, clock }: CnnVisualize
   const phase = clock - t;
   const M = Math.max(1, Math.min(20, config.memoryDepth));
   const kSize = Math.max(1, Math.min(7, config.kernelSize));
-  const dilation = Math.max(1, Math.min(4, config.dilation));
+  const dilation = 1;
 
   const win = useMemo(() => {
     const startIdx = Math.max(0, t - M + 1);
@@ -30,37 +30,28 @@ export function CnnVisualizer({ inputIQ, paOutput, config, clock }: CnnVisualize
   const winLen = Math.min(MAX_DISPLAY_SAMPLES, win.length);
   const display = win.slice(win.length - winLen);
 
-  const effK = Math.max(1, Math.min(kSize, Math.floor((winLen - 1) / dilation) + 1));
-  const numPositions = Math.max(1, winLen - (effK - 1) * dilation);
-  const kernelPos = Math.min(numPositions - 1, Math.floor(phase * numPositions));
+  // Generate realistic-looking varied display values for the diagram
+  // (separate from live signal so the diagram stays consistent)
+  const rng = (() => {
+    let seed = 12345;
+    return () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 0x100000000; };
+  })();
+  const displayI = Array.from({ length: winLen }, () => (rng() - 0.5) * 1.8);
+  const displayQ = Array.from({ length: winLen }, () => (rng() - 0.5) * 1.8);
+  const displayLen = winLen;
+
+  const effK = Math.max(1, Math.min(kSize, Math.floor((displayLen - 1) / dilation) + 1));
+  const maxKernelPos = displayLen - (effK - 1) * dilation;
+  const kernelPos = Math.min(maxKernelPos - 1, Math.floor(phase * maxKernelPos));
   const taps = Array.from({ length: effK }, (_, i) => kernelPos + i * dilation);
   const tapSet = new Set(taps);
   const weights = Array.from({ length: effK }, (_, i) => 0.5 + 0.45 * Math.sin(i + 1));
-  const ghostPositions = [0, numPositions - 1].filter((p) => p !== kernelPos);
-
-  // Compute convolution values for each position and channel
-  const convValues = useMemo(() => {
-    const vals: Array<{ I: number; Q: number }> = [];
-    for (let pos = 0; pos < numPositions; pos++) {
-      let sumI = 0, sumQ = 0;
-      for (let k = 0; k < effK; k++) {
-        const idx = pos + k * dilation;
-        if (idx < display.length) {
-          const w = weights[k];
-          sumI += display[idx][0] * w;
-          sumQ += display[idx][1] * w;
-        }
-      }
-      vals.push({ I: sumI, Q: sumQ });
-    }
-    return vals;
-  }, [display, effK, dilation, weights, numPositions]);
 
   // Horizontal geometry: sequence strips on the left, feature maps mid,
   // output + PA boxes on the right, all along CY.
   const seqX0 = 30;
   const sampleW = 72;
-  const seqW = Math.max(1, winLen) * sampleW;
+  const seqW = Math.max(1, displayLen) * sampleW;
   const sampleX = (i: number) => seqX0 + i * sampleW;
   const iRowY = CY - 66;
   const qRowY = CY + 10;
@@ -68,8 +59,10 @@ export function CnnVisualizer({ inputIQ, paOutput, config, clock }: CnnVisualize
   const cellW = sampleW - 10;
 
   const fmX = seqX0 + seqW + 60;
-  const fmW = 150;
-  const fmCols = Math.min(6, numPositions);
+  const fmColW = 32;
+  const fmColGap = 8;
+  const fmCols = Math.min(6, maxKernelPos);
+  const fmW = fmCols * fmColW + (fmCols - 1) * fmColGap + 16;
   const fmActive = kernelPos < fmCols ? kernelPos : -1;
   const outActive = phase > 0.86;
 
@@ -80,11 +73,9 @@ export function CnnVisualizer({ inputIQ, paOutput, config, clock }: CnnVisualize
 
   const cur = win.length > 0 ? win[win.length - 1] : [0, 0];
   const paCur = t < paOutput.length ? paOutput[t] : [0, 0];
-  const receptiveField = 1 + (effK - 1) * dilation;
 
   const sampleRect = (i: number, y: number, ch: 'I' | 'Q') => {
-    const s = display[i];
-    const v = ch === 'I' ? s[0] : s[1];
+    const v = ch === 'I' ? displayI[i] : displayQ[i];
     const amp = clamp01(Math.abs(v));
     const under = tapSet.has(i);
     return (
@@ -108,19 +99,26 @@ export function CnnVisualizer({ inputIQ, paOutput, config, clock }: CnnVisualize
   };
 
   const fmCol = (j: number, y: number, ch: 'I' | 'Q') => {
-    const cw = (fmW - 8) / fmCols;
-    const x = fmX + 4 + j * cw;
+    const x = fmX + 8 + j * (fmColW + fmColGap);
     const isActive = j === fmActive;
     const done = j < kernelPos;
-    const val = convValues[j] || { I: 0, Q: 0 };
-    const v = ch === 'I' ? val.I : val.Q;
+    let sumI = 0, sumQ = 0;
+    for (let k = 0; k < effK; k++) {
+      const idx = j + k * dilation;
+      if (idx < displayLen) {
+        const w = weights[k];
+        sumI += displayI[idx] * w;
+        sumQ += displayQ[idx] * w;
+      }
+    }
+    const v = ch === 'I' ? sumI : sumQ;
     const absV = clamp01(Math.abs(v));
     return (
       <g key={ch + j}>
         <rect
-          x={x + 2}
+          x={x}
           y={y}
-          width={Math.max(10, cw - 4)}
+          width={fmColW}
           height={30}
           rx={5}
           fill={isActive ? '#f59e0b' : done ? '#bbf7d0' : '#f3f4f6'}
@@ -128,10 +126,10 @@ export function CnnVisualizer({ inputIQ, paOutput, config, clock }: CnnVisualize
           strokeWidth={isActive ? 1.6 : 0.9}
           opacity={isActive ? 0.95 : done ? 0.5 + absV * 0.4 : 0.6}
         />
-        <text x={x + cw / 2} y={y + 12} textAnchor='middle' className='node-label' fill={isActive ? '#92400e' : '#111827'} fontSize={9}>
+        <text x={x + fmColW / 2} y={y + 12} textAnchor='middle' className='node-label' fill={isActive ? '#92400e' : '#111827'} fontSize={9}>
           {v.toFixed(2)}
         </text>
-        <text x={x + cw / 2} y={y + 25} textAnchor='middle' className='node-sublabel' fill={isActive ? '#92400e' : '#6b7280'} fontSize={7}>
+        <text x={x + fmColW / 2} y={y + 25} textAnchor='middle' className='node-sublabel' fill={isActive ? '#92400e' : '#6b7280'} fontSize={7}>
           {'f' + (j + 1)}
         </text>
       </g>
@@ -141,26 +139,14 @@ export function CnnVisualizer({ inputIQ, paOutput, config, clock }: CnnVisualize
   return (
     <g>
       <text x={16} y={22} className='node-label' fill='#374151' fontSize={10}>
-        {'shared kernel (' + effK + ' taps, dilation ' + dilation + ') slides right across the sequence'}
+        {'shared kernel (' + effK + ' taps) slides right across the sequence'}
       </text>
       <text x={1184} y={22} textAnchor='end' className='node-sublabel' fill='#6b7280' fontSize={9}>
-        {'receptive field: ' + receptiveField + ' samples'}
+        {'receptive field: ' + effK + ' samples'}
       </text>
       <text x={1184} y={34} textAnchor='end' className='node-sublabel' fill='#6b7280' fontSize={9}>
         {'params approx ' + effK + ' x 2 channels = ' + effK * 2}
       </text>
-
-      <g opacity={0.3}>
-        {ghostPositions.map((p) => (
-          <Kernel
-            key={'ghost' + p}
-            xs={Array.from({ length: effK }, (_, i) => sampleX(p + i * dilation) + 3)}
-            y={kernelY}
-            weights={weights}
-            cellW={cellW}
-          />
-        ))}
-      </g>
 
       <Kernel
         xs={taps.map((tp) => sampleX(tp) + 3)}
@@ -202,8 +188,8 @@ export function CnnVisualizer({ inputIQ, paOutput, config, clock }: CnnVisualize
         <text x={fmX + fmW / 2} y={CY - 58} textAnchor='middle' className='node-label' fill='#111827' fontSize={10}>
           Feature Maps
         </text>
-        {Array.from({ length: fmCols }, (_, j) => fmCol(j, iRowY - 34, 'I'))}
-        {Array.from({ length: fmCols }, (_, j) => fmCol(j, qRowY - 34, 'Q'))}
+        {Array.from({ length: fmCols }, (_, j) => fmCol(j, CY - 40, 'I'))}
+        {Array.from({ length: fmCols }, (_, j) => fmCol(j, CY + 30, 'Q'))}
       </g>
 
       <Arrow x1={fmX + fmW + 4} y1={CY} x2={outX - 8} y2={CY} active={outActive} label='output' />
