@@ -36,13 +36,17 @@ export function GruVisualizer({ inputIQ, paOutput, config, clock }: GruVisualize
   const gatesPhase = clamp01((phase - 0.3) / 0.4);
   const gatesWave = ease(gatesPhase);
   const gatesActive = phase >= 0.3 && phase <= 0.72;
+  // Animation staging: Reset fires, then Filter, then Candidate, then Blend.
+  const resetActive = phase >= 0.3 && phase < 0.5;
+  const filterActive = phase >= 0.45 && phase < 0.62;
+  const candActive = phase >= 0.6 && phase < 0.75;
   const rVal = clamp01(0.35 + 0.5 * amp * (0.5 + 0.5 * Math.sin(t))) * gatesWave;
   const zVal = clamp01(0.3 + 0.5 * amp * (0.5 + 0.5 * Math.cos(t))) * gatesWave;
 
   // Horizontal geometry: cell centered, x(t) + h(t-1) on left,
   // h(t) -> output -> PA marching right along CY.
   const cellX = 320;
-  const cellW = 320;
+  const cellW = 400;
   const cellH = 220;
   const cellY = CY - cellH / 2;
   const outX = cellX + cellW + 60;
@@ -63,8 +67,8 @@ export function GruVisualizer({ inputIQ, paOutput, config, clock }: GruVisualize
   const hPortX = cellX;
   const hPortY = hPrevY;
 
-  // Interior layout: Reset + Update stacked left, Candidate right.
-  const boxW = 118;
+  // Interior layout: Reset + Update stacked left, Filter slot, Candidate right.
+  const boxW = 106;
   const boxH = 68;
   const resetX = cellX + 64;
   const resetY = cellY + 42;
@@ -72,14 +76,27 @@ export function GruVisualizer({ inputIQ, paOutput, config, clock }: GruVisualize
   const updateY = cellY + 118;
   const resetMidY = resetY + boxH / 2;
   const updateMidY = updateY + boxH / 2;
-  const candX = cellX + 198;
+  // Filter node: small circle between Reset and Candidate at Reset's height.
+  const filtCX = cellX + 190;
+  const filtCY = resetMidY;
+  const filtR = 15;
+  const candX = cellX + 210;
   const candY = cellY + 42;
-  const candW = 104;
+  const candW = 92;
   const candH = boxH * 2 + 8;
   // Shared merge dot + trunk (H/V wiring only).
   const mergeX = cellX + 30;
   const mergeY = (resetMidY + updateMidY) / 2;
   const trunkX = cellX + 48;
+  // x(t) feed into Candidate lower-left (blue branch off the x riser).
+  const candFeedX = cellX + 185;
+  const candLowY = candY + candH - 16;
+  // Blend node: circular, right side of the cell.
+  const blendCX = cellX + 348;
+  const blendCY = CY;
+  const blendR = 26;
+  const railY = cellY + 20;
+  const ctrlY = cellY + cellH - 26;
 
   return (
     <g>
@@ -107,20 +124,22 @@ export function GruVisualizer({ inputIQ, paOutput, config, clock }: GruVisualize
           stroke='#7c3aed'
           strokeWidth={1.6}
         />
-        <text x={cellX + cellW / 2} y={cellY + 24} textAnchor='middle' className='node-label' fill='#5b21b6' fontSize={12}>
+        <text x={cellX + 12} y={cellY + cellH - 10} textAnchor='start' className='node-label' fill='#5b21b6' fontSize={12}>
           GRU Cell
         </text>
         {/* Input ports on left edge: blue x(t) near bottom, purple h(t-1) near top */}
         <circle cx={xPortX} cy={xPortY} r={portR} fill='#eff6ff' stroke='#3b82f6' strokeWidth={1.5} />
         <circle cx={hPortX} cy={hPortY} r={portR} fill='#f5f3ff' stroke='#7c3aed' strokeWidth={1.5} />
 
-        {/* Shared merge point: one dot where x(t) and h(t-1) combine (H/V wires only) */}
+        {/* Shared merge dot: feeds ONLY Reset and Update (H/V wires only).
+            x(t) stays blue and h(t-1) stays purple into the dot. */}
         <line x1={xPortX} y1={xPortY} x2={xPortX + 14} y2={xPortY} stroke='#3b82f6' strokeWidth={1.4} />
-        <line x1={xPortX + 14} y1={xPortY} x2={xPortX + 14} y2={mergeY} stroke='#3b82f6' strokeWidth={1.4} />
+        <line x1={xPortX + 14} y1={xPortY} x2={xPortX + 14} y2={xPortY + 16} stroke='#3b82f6' strokeWidth={1.4} />
+        <line x1={xPortX + 14} y1={xPortY + 16} x2={xPortX + 14} y2={mergeY} stroke='#3b82f6' strokeWidth={1.4} />
         <line x1={hPortX} y1={hPortY} x2={hPortX + 14} y2={hPortY} stroke='#7c3aed' strokeWidth={1.4} />
         <line x1={hPortX + 14} y1={hPortY} x2={hPortX + 14} y2={mergeY} stroke='#7c3aed' strokeWidth={1.4} />
-        <line x1={xPortX + 14} y1={mergeY} x2={mergeX} y2={mergeY} stroke='#6b7280' strokeWidth={1.4} />
-        <line x1={hPortX + 14} y1={mergeY} x2={mergeX} y2={mergeY} stroke='#6b7280' strokeWidth={1.4} />
+        <line x1={xPortX + 14} y1={mergeY} x2={mergeX} y2={mergeY} stroke='#3b82f6' strokeWidth={1.4} />
+        <line x1={hPortX + 14} y1={mergeY} x2={mergeX} y2={mergeY} stroke='#7c3aed' strokeWidth={1.4} />
         <circle cx={mergeX} cy={mergeY} r={4} fill='#6b7280' />
 
         {/* Trunk from merge dot right, splitting up/down into Reset and Update */}
@@ -128,11 +147,17 @@ export function GruVisualizer({ inputIQ, paOutput, config, clock }: GruVisualize
         <line x1={trunkX} y1={resetMidY} x2={trunkX} y2={updateMidY} stroke='#6b7280' strokeWidth={1.4} />
         <line x1={trunkX} y1={resetMidY} x2={resetX} y2={resetMidY} stroke='#6b7280' strokeWidth={1.4} />
         <line x1={trunkX} y1={updateMidY} x2={updateX} y2={updateMidY} stroke='#6b7280' strokeWidth={1.4} />
-        {/* Candidate feed: straight horizontal wire from the trunk */}
-        <line x1={trunkX} y1={mergeY} x2={candX} y2={mergeY} stroke='#6b7280' strokeWidth={1.4} />
+
+        {/* x(t) branch into Candidate lower-left: blue the whole way */}
+        <line x1={xPortX + 14} y1={xPortY + 16} x2={candFeedX} y2={xPortY + 16} stroke='#3b82f6' strokeWidth={1.4} />
+        <line x1={candFeedX} y1={xPortY + 16} x2={candFeedX} y2={candLowY} stroke='#3b82f6' strokeWidth={1.4} />
+        <line x1={candFeedX} y1={candLowY} x2={candX} y2={candLowY} stroke='#3b82f6' strokeWidth={1.4} />
+        <text x={(xPortX + 14 + candFeedX) / 2} y={xPortY + 8} textAnchor='middle' className='node-sublabel' fill='#1e3a8a' fontSize={8}>
+          new input
+        </text>
 
         {/* Reset box (green) with value bar */}
-        <rect x={resetX} y={resetY} width={boxW} height={boxH} rx={8} fill='#f0fdf4' stroke='#16a34a' strokeWidth={1.4} />
+        <rect x={resetX} y={resetY} width={boxW} height={boxH} rx={8} fill={resetActive ? '#fef3c7' : '#f0fdf4'} stroke={resetActive ? '#f59e0b' : '#16a34a'} strokeWidth={1.4} />
         <text x={resetX + boxW / 2} y={resetY + 16} textAnchor='middle' className='node-label' fill='#14532d' fontSize={11}>
           Reset
         </text>
@@ -158,7 +183,7 @@ export function GruVisualizer({ inputIQ, paOutput, config, clock }: GruVisualize
         <Gate x={updateX + 10} y={updateY + 44} w={boxW - 44} label='' value={zVal} />
 
         {/* Candidate box (amber) */}
-        <rect x={candX} y={candY} width={candW} height={candH} rx={8} fill='#fffbeb' stroke='#f59e0b' strokeWidth={1.4} />
+        <rect x={candX} y={candY} width={candW} height={candH} rx={8} fill={candActive ? '#fef3c7' : '#fffbeb'} stroke='#f59e0b' strokeWidth={candActive ? 1.8 : 1.4} />
         <text x={candX + candW / 2} y={candY + 22} textAnchor='middle' className='node-label' fill='#92400e' fontSize={11}>
           Candidate
         </text>
@@ -168,6 +193,35 @@ export function GruVisualizer({ inputIQ, paOutput, config, clock }: GruVisualize
         <text x={candX + candW / 2} y={candY + 50} textAnchor='middle' className='node-sublabel' fill='#b45309' fontSize={8}>
           new memory
         </text>
+        {/* Filter node: Reset output (green) + purple branch from h(t-1) rail */}
+        <line x1={resetX + boxW} y1={resetMidY} x2={filtCX - filtR} y2={filtCY} stroke='#16a34a' strokeWidth={1.4} />
+        <line x1={filtCX} y1={hPortY} x2={filtCX} y2={filtCY - filtR} stroke='#7c3aed' strokeWidth={1.4} />
+        <circle cx={filtCX} cy={filtCY} r={filtR} fill={filterActive ? '#fef3c7' : '#ffffff'} stroke='#7c3aed' strokeWidth={filterActive ? 1.8 : 1.4} />
+        <text x={filtCX} y={filtCY + 24} textAnchor='middle' className='node-label' fill='#5b21b6' fontSize={9}>
+          Filter
+        </text>
+        {/* Filter output into Candidate left side */}
+        <line x1={filtCX + filtR} y1={filtCY} x2={candX} y2={filtCY} stroke='#7c3aed' strokeWidth={1.4} />
+        <text x={filtCX} y={filtCY + 36} textAnchor='middle' className='node-sublabel' fill='#5b21b6' fontSize={8}>
+          past,
+        </text>
+        <text x={filtCX} y={filtCY + 46} textAnchor='middle' className='node-sublabel' fill='#5b21b6' fontSize={8}>
+          filtered
+        </text>
+        {/* Blend node (circular) + its three H/V inputs and h(t) output */}
+        <line x1={hPortX + 14} y1={hPortY} x2={blendCX} y2={hPortY} stroke='#7c3aed' strokeWidth={1.4} />
+        <line x1={blendCX} y1={hPortY} x2={blendCX} y2={blendCY - blendR} stroke='#7c3aed' strokeWidth={1.4} />
+        <line x1={candX + candW} y1={blendCY} x2={blendCX - blendR} y2={blendCY} stroke='#f59e0b' strokeWidth={1.4} />
+        <line x1={updateX + boxW} y1={updateMidY} x2={updateX + boxW + 8} y2={updateMidY} stroke='#16a34a' strokeWidth={1.4} />
+        <line x1={updateX + boxW + 8} y1={updateMidY} x2={updateX + boxW + 8} y2={ctrlY} stroke='#16a34a' strokeWidth={1.4} />
+        <line x1={updateX + boxW + 8} y1={ctrlY} x2={blendCX} y2={ctrlY} stroke='#16a34a' strokeWidth={1.4} />
+        <line x1={blendCX} y1={ctrlY} x2={blendCX} y2={blendCY + blendR} stroke='#16a34a' strokeWidth={1.4} />
+        <circle cx={blendCX} cy={blendCY} r={blendR} fill={hOut > 0.3 ? '#fef3c7' : '#ffffff'} stroke='#7c3aed' strokeWidth={1.6} />
+        <text x={blendCX} y={blendCY + 4} textAnchor='middle' className='node-label' fill='#5b21b6' fontSize={11}>
+          Blend
+        </text>
+        <line x1={blendCX + blendR} y1={blendCY} x2={cellX + cellW} y2={blendCY} stroke='#7c3aed' strokeWidth={1.4} />
+        <circle cx={cellX + cellW} cy={blendCY} r={portR} fill='#f5f3ff' stroke='#7c3aed' strokeWidth={1.5} />
       </g>
 
       {/* h(t) leaves right */}
